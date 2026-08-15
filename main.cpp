@@ -1,6 +1,8 @@
 #include <NetworkManager.h>
 #include <glib.h>
 #include <iostream>
+#include <unordered_set>
+#include <string>
 
 void activatedCallback(GObject *client, GAsyncResult *result, gpointer user_data)
 {
@@ -29,9 +31,8 @@ void addedCallback(GObject *client, GAsyncResult *result, gpointer user_data)
     } else {
         g_print("Added: %s\n", nm_connection_get_path(NM_CONNECTION(remote)));
         nm_client_activate_connection_async(NM_CLIENT(client), NM_CONNECTION(remote), nullptr, nullptr, nullptr, activatedCallback, user_data );
+        g_object_unref(remote);
     }
-
-    g_object_unref(remote);
 
 }
 
@@ -42,6 +43,8 @@ void scanCallback(GObject *source, GAsyncResult *result, gpointer user_data) {
     if (nm_device_wifi_request_scan_finish(device, result, &error)) {
         const GPtrArray *networks = nm_device_wifi_get_access_points(device);
 
+        std::unordered_set<std::string> seen;
+
         for (guint i = 0; i < networks->len; i++) {
             auto *ap = (NMAccessPoint *)g_ptr_array_index(networks, i);
             GBytes *ssid = nm_access_point_get_ssid(ap);
@@ -51,6 +54,9 @@ void scanCallback(GObject *source, GAsyncResult *result, gpointer user_data) {
 
                 const auto *data = (const guint8 *)g_bytes_get_data(ssid, &len);
                 g_autofree char *name = nm_utils_ssid_to_utf8(data, len);
+
+                if (!name || !seen.insert(name).second)
+                    continue;
 
                 g_print("SSID: %s\n", name);
             }
@@ -97,13 +103,12 @@ void scanNetworks(NMClient *client, GMainLoop *loop) {
 
     auto *device = (NMDeviceWifi *)nm_client_get_device_by_iface(client, "wlo1");
     if (!device) {
-        g_printerr("No device found for wlan0\n");
+        g_printerr("No device found for wlo1\n");
+        g_main_loop_quit(loop);
+        return;
     }
 
     nm_device_wifi_request_scan_async(device, nullptr, scanCallback, loop);
-
-    g_object_unref(device);
-
 }
 
 int main() {
@@ -124,6 +129,7 @@ int main() {
 
     g_main_loop_run(loop);
 
+    g_main_loop_unref(loop);
     g_object_unref(client);
 
     return 0;
